@@ -64,17 +64,18 @@ target_link_libraries(${PROJECT_NAME}
     )
 
 # Find the installation path
-execute_process(COMMAND ${Python3_EXECUTABLE} -c "from distutils import sysconfig; print(sysconfig.get_python_lib(plat_specific=True, prefix='${CMAKE_INSTALL_PREFIX}' ) )"
-    OUTPUT_VARIABLE _ABS_PYTHON_MODULE_PATH
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-get_filename_component (_ABS_PYTHON_MODULE_PATH ${_ABS_PYTHON_MODULE_PATH} ABSOLUTE)
-file (RELATIVE_PATH _REL_PYTHON_MODULE_PATH ${CMAKE_INSTALL_PREFIX} ${_ABS_PYTHON_MODULE_PATH})
-SET (PYTHON_MODULE_PATH
-    ${_REL_PYTHON_MODULE_PATH}
-    )
+# execute_process(COMMAND ${Python3_EXECUTABLE} -c "from distutils import sysconfig; print(sysconfig.get_python_lib(plat_specific=True, prefix='${CMAKE_INSTALL_PREFIX}' ) )"
+#     OUTPUT_VARIABLE _ABS_PYTHON_MODULE_PATH
+#     OUTPUT_STRIP_TRAILING_WHITESPACE
+#     )
+# get_filename_component (_ABS_PYTHON_MODULE_PATH ${_ABS_PYTHON_MODULE_PATH} ABSOLUTE)
+# file (RELATIVE_PATH _REL_PYTHON_MODULE_PATH ${CMAKE_INSTALL_PREFIX} ${_ABS_PYTHON_MODULE_PATH})
+# SET (PYTHON_MODULE_PATH
+#     ${_REL_PYTHON_MODULE_PATH}
+#     )
 
 # Install
+message(STATUS "Python module path for installation: ${PYTHON_MODULE_PATH}")
 install(TARGETS ${PROJECT_NAME}
     EXPORT ${PROJECT_NAME}-targets
     DESTINATION ${PYTHON_MODULE_PATH}
@@ -89,18 +90,18 @@ install(EXPORT ${PROJECT_NAME}-targets
     )
 
 # Create CMake config file.
-include(CMakePackageConfigHelpers)
+# include(CMakePackageConfigHelpers)
 
-configure_package_config_file(${PROJECT_SOURCE_DIR}/cmake/packaging/Config.cmake.in
-    ${PROJECT_BINARY_DIR}/cmake/config/${PROJECT_NAME}-config.cmake
-    INSTALL_DESTINATION ${LIB_INSTALL_DIR}/cmake/${PROJECT_NAME}
-    PATH_VARS LIB_INSTALL_DIR
-    )
-write_basic_package_version_file(${PROJECT_BINARY_DIR}/cmake/config/${PROJECT_NAME}-config-version.cmake
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
-    )
-install(FILES ${PROJECT_BINARY_DIR}/cmake/config/${PROJECT_NAME}-config.cmake
-    ${PROJECT_BINARY_DIR}/cmake/config/${PROJECT_NAME}-config-version.cmake
-    DESTINATION ${LIB_INSTALL_DIR}/cmake/${PROJECT_NAME}
-    )
+# configure_package_config_file(${PROJECT_SOURCE_DIR}/cmake/packaging/Config.cmake.in
+#     ${PROJECT_BINARY_DIR}/cmake/config/${PROJECT_NAME}-config.cmake
+#     INSTALL_DESTINATION ${LIB_INSTALL_DIR}/cmake/${PROJECT_NAME}
+#     PATH_VARS LIB_INSTALL_DIR
+#     )
+# write_basic_package_version_file(${PROJECT_BINARY_DIR}/cmake/config/${PROJECT_NAME}-config-version.cmake
+#     VERSION ${PROJECT_VERSION}
+#     COMPATIBILITY SameMajorVersion
+#     )
+# install(FILES ${PROJECT_BINARY_DIR}/cmake/config/${PROJECT_NAME}-config.cmake
+#     ${PROJECT_BINARY_DIR}/cmake/config/${PROJECT_NAME}-config-version.cmake
+#     DESTINATION ${LIB_INSTALL_DIR}/cmake/${PROJECT_NAME}
+#     )
