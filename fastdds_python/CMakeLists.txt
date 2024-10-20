@@ -49,7 +49,30 @@ find_package(fastrtps 2.12 REQUIRED)
 # Project subdirectories
 ###############################################################################
 
-add_subdirectory(src/swig)
+# add_subdirectory(src/swig)
+
+###############################################################################
+# Pybind11 wrapper
+###############################################################################
+
+add_subdirectory(../../pybind11 build)
+
+pybind11_add_module(fastdds_pybind
+  NO_EXTRAS # TODO (AM): This flag is useful for debugging, but the binary grows to 3.2MB (vs 1.3MB) with this
+  src/fastdds_pybind.cpp
+)
+
+target_include_directories(fastdds_pybind PRIVATE
+  ${fastrtps_INCLUDE_DIR}
+  ${fastcdr_INCLUDE_DIR}
+)
+
+target_link_libraries(fastdds_pybind PRIVATE
+  fastrtps
+  fastcdr 
+)
+
+install(TARGETS fastdds_pybind DESTINATION ${LIBRARY_RESOURCES_DIRECTORY_ABS})
 
 ###############################################################################
 # Testing options
