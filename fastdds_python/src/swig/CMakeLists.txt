@@ -34,15 +34,27 @@ SET_SOURCE_FILES_PROPERTIES(
     USE_TARGET_INCLUDE_DIRECTORIES TRUE
     )
 
+SET(SOURCES
+    CustomTopicDataType.h
+    CustomTopicDataType.cpp
+)
+
 option(BUILD_DOCUMENTATION "Use doxygen to create product documentation" OFF)
 if (BUILD_DOCUMENTATION)
     set(CMAKE_SWIG_FLAGS "-doxygen")
 endif (BUILD_DOCUMENTATION)
 
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${Python3_INCLUDE_DIRS}
+    ${fastcdr_INCLUDE_DIR}
+    ${fastrtps_INCLUDE_DIR}
+)
+
 swig_add_library(${PROJECT_NAME}
     TYPE SHARED
     LANGUAGE python
-    SOURCES ${${PROJECT_NAME}_FILES}
+    SOURCES ${${PROJECT_NAME}_FILES} ${SOURCES}
     )
 
 if(MSVC OR MSVC_IDE)

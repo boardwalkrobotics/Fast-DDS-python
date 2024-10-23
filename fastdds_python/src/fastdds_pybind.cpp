@@ -100,30 +100,32 @@ class PyTopicDataType : public TopicDataType
 {
 private:
     py::object python_type;
-    py::object cdr_class;
+    py::object self_py;
 
 public:
     using TopicDataType::TopicDataType;
     PyTopicDataType(py::object py_type) : python_type(py_type), TopicDataType()
     {
-        setName(py::str(python_type.attr("__name__")).cast<std::string>().c_str());
-        m_typeSize = 0;
-        m_isGetKeyDefined = false;
+        // setName(py::str(python_type.attr("__name__")).cast<std::string>().c_str());
+        // m_typeSize = 0;
+        // m_isGetKeyDefined = false;
 
-        py::module cdr_module = py::module::import("pypubsub.cdr");
-        cdr_class = cdr_module.attr("CDR");
+        // py::module cdr_module = py::module::import("pypubsub.cdr");
+        // cdr_class = cdr_module.attr("CDR");
+        self_py = py::cast(this);
     }
 
     bool serialize(void *data, SerializedPayload_t *payload) override
     {
         // Due to FastDDS using void* for passing around data, we need to cast
         // the PyCapsule to the original python object
-        // PYBIND11_OVERRIDE_PURE(bool, TopicDataType, serialize, data, payload);
+        PYBIND11_OVERRIDE_PURE(bool, TopicDataType, serialize, data, payload);
+
         py::gil_scoped_acquire acquire;
         py::object py_data = *static_cast<py::object *>(data);
 
         py::object cdr_instance = cdr_class();
-        py::bytes result = cdr_instance.attr("serialize")(py_data);
+        py::bytes result = self_py.attr("_serialize")(py_data);
 
         py::bytes result_bytes = result.cast<py::bytes>();
         char *buffer;
@@ -145,27 +147,19 @@ public:
 
     bool deserialize(SerializedPayload_t *payload, void *data) override
     {
-        // PYBIND11_OVERRIDE_PURE(bool, TopicDataType, deserialize, payload, data);
-        py::gil_scoped_acquire acquire;
-        py::object py_data = py::cast(data);
-        py::object cdr_instance = cdr_class();
-
-        py::bytes payload_bytes(reinterpret_cast<char *>(payload->data), payload->length);
-        py::object result = cdr_instance.attr("deserialize")(payload_bytes, python_type);
-
-        py_data.attr("__dict__").attr("update")(result.attr("__dict__"));
-
-        return true;
+        PYBIND11_OVERRIDE_PURE(bool, TopicDataType, deserialize, payload, data);
     }
 
     std::function<uint32_t()> getSerializedSizeProvider(void *data) override
     {
         // PYBIND11_OVERRIDE_PURE(std::function<uint32_t()>, TopicDataType, getSerializedSizeProvider, data);
-        // TODO (AM): Implement a CdrSizeCalculator in the python cdr and then call it here
-        return [data]() -> uint32_t
-        {
-            return 255;
-        };
+        try {
+            py::object py_size = self_py.attr("_get_serialized_size")(py::cast(data));
+            uint32_t size = py::cast<uint32_t>(py_size);
+            return [size]() -> uint32_t {return size;};
+        } catch (py::error_already_set &e) {
+            throw e;
+        }
     }
 
     void *createData() override
@@ -178,14 +172,14 @@ public:
         PYBIND11_OVERRIDE_PURE(void, TopicDataType, deleteData, data);
     }
 
-    bool getKey(void *data, InstanceHandle_t *ihandle, bool force_md5 = false) override
-    {
-        PYBIND11_OVERRIDE_PURE(bool, TopicDataType, getKey, data, ihandle, force_md5);
-    }
+    // bool getKey(void *data, InstanceHandle_t *ihandle, bool force_md5 = false) override
+    // {
+    //     PYBIND11_OVERRIDE_PURE(bool, TopicDataType, getKey, data, ihandle, force_md5);
+    // }
 
     bool is_bounded() const override
     {
-        return true;
+        PYBIND11_OVERRIDE_PURE(bool, TopicDataType, is_bounded);
     }
     // TypeSupport getTypeSupport() {
     //     return TypeSupport(this);
@@ -250,10 +244,13 @@ PYBIND11_MODULE(fastdds_pybind, m)
              { return self.serialize(data.ptr(), payload); })
         .def("deserialize", [](TopicDataType &self, SerializedPayload_t *payload, py::object data)
              { return self.deserialize(payload, data.ptr()); })
-        .def("getSerializedSizeProvider", [](TopicDataType &self, py::object data)
-             { return self.getSerializedSizeProvider(data.ptr()); })
-        .def("createData", &TopicDataType::createData)
-        .def("deleteData", [](TopicDataType &self, py::object data)
+        .def("_get_serialized_size", [](TopicDataType &self, py::object data) -> uint32_t
+             { 
+                // overridden in python
+                return uint32_t{0}; 
+            })
+        // .def("createData", &TopicDataType::createData)
+        // .def("deleteData", [](TopicDataType &self, py::object data)
              { self.deleteData(data.ptr()); })
         .def("getKey", [](TopicDataType &self, py::object data, InstanceHandle_t *ihandle, bool force_md5)
              { return self.getKey(data.ptr(), ihandle, force_md5); })
@@ -412,29 +409,25 @@ PYBIND11_MODULE(fastdds_pybind, m)
 
     py::class_<IPayloadPool, std::shared_ptr<IPayloadPool>>(m, "IPayloadPool");
 
-    // DataWriter binding
-    py::class_<DataWriter>(m, "DataWriter")
-        .def("get_topic", &DataWriter::get_topic, py::return_value_policy::reference)
-        // .def("get_qos", py::overload_cast<>(&DataWriter::get_qos))
-        .def("get_qos", py::overload_cast<DataWriterQos &>(&DataWriter::get_qos, py::const_))
-        // .def("get_qos", &DataWriter::get_qos)
-        .def("set_qos", &DataWriter::set_qos)
-        .def("get_listener", &DataWriter::get_listener, py::return_value_policy::reference)
-        .def("set_listener", py::overload_cast<DataWriterListener *, const StatusMask &>(&DataWriter::set_listener))
-        .def("assert_liveliness", &DataWriter::assert_liveliness)
-        .def("write", [](DataWriter &self, py::object &obj)
-             { 
-                // void *data = obj.cast<void *>();
-                py::object* data_ptr = new py::object(obj);
-                self.write(data_ptr); 
-                delete data_ptr;
-                });
-
     py::class_<DataWriterListener>(m, "DataWriterListener")
         .def(py::init<>());
 
     py::class_<DataWriterQos>(m, "DataWriterQos")
         .def(py::init<>());
+    // .def_readwrite("history", &DataWriterQos::history);
+
+    py::enum_<eprosima::fastdds::dds::HistoryQosPolicyKind>(m, "HistoryQosPolicyKind")
+        .value("KEEP_LAST", eprosima::fastdds::dds::HistoryQosPolicyKind::KEEP_LAST_HISTORY_QOS)
+        .value("KEEP_ALL", eprosima::fastdds::dds::HistoryQosPolicyKind::KEEP_ALL_HISTORY_QOS);
+
+    py::class_<HistoryQosPolicy>(m, "HistoryQosPolicy")
+        .def(py::init<>());
+    // .def_property("kind", [](const HistoryQosPolicy &qos)
+    //               { return qos.kind(); }, [](HistoryQosPolicy &qos, const eprosima::fastdds::dds::HistoryQosPolicyKind &kind)
+    //               { qos.kind(kind); })
+    // .def_property("depth", [](const HistoryQosPolicy &qos)
+    //               { return qos.depth(); }, [](HistoryQosPolicy &qos, int32_t depth)
+    //               { qos.depth(depth); });
 
     py::class_<PublisherListener>(m, "PublisherListener")
         .def(py::init<>());
@@ -453,6 +446,23 @@ PYBIND11_MODULE(fastdds_pybind, m)
         .def_property("entity_factory", [](const PublisherQos &qos)
                       { return qos.entity_factory(); }, [](PublisherQos &qos, const eprosima::fastdds::dds::EntityFactoryQosPolicy &entity_factory)
                       { qos.entity_factory(entity_factory); });
+
+    // DataWriter binding
+    py::class_<DataWriter>(m, "DataWriter")
+        .def("get_topic", &DataWriter::get_topic, py::return_value_policy::reference)
+        // .def("get_qos", py::overload_cast<>(&DataWriter::get_qos))
+        .def("get_qos", py::overload_cast<DataWriterQos &>(&DataWriter::get_qos, py::const_))
+        // .def("get_qos", &DataWriter::get_qos)
+        .def("set_qos", &DataWriter::set_qos)
+        .def("get_listener", &DataWriter::get_listener, py::return_value_policy::reference)
+        .def("set_listener", py::overload_cast<DataWriterListener *, const StatusMask &>(&DataWriter::set_listener))
+        .def("assert_liveliness", &DataWriter::assert_liveliness)
+        .def("write", [](DataWriter &self, py::object &obj)
+             { 
+                // void *data = obj.cast<void *>();
+                py::object* data_ptr = new py::object(obj);
+                self.write(data_ptr); 
+                delete data_ptr; });
 
     py::class_<Publisher>(m, "Publisher")
         .def("create_datawriter", [](Publisher &self, Topic &topic, const DataWriterQos &qos, DataWriterListener *listener, const StatusMask &mask)
