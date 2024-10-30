@@ -1,0 +1,24 @@
+---
+Language:        Cpp
+# Based on the Uncrustify configuration provided
+
+# General options
+BasedOnStyle:    Google
+IndentWidth:     4
+TabWidth:        4
+UseTab:          Never
+BreakBeforeBraces: Attach
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+ColumnLimit:     120
+
+# Import sorting rules
+SortIncludes: true
+IncludeCategories:
+  - Regex: '^pybind'
+    Priority: 1
+
+  - Regex: '^fastdds'
+    Priority: 2
