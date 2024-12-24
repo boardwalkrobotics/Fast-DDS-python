@@ -1,3 +1,9 @@
+/*
+Compile using-
+    cmake .. -DCMAKE_BUILD_TYPE=Release
+    cmake --build . --target install -j 30 --config Release --clean-first
+*/
+
 #include <fastdds/dds/core/policy/QosPolicies.hpp>
 #include <fastdds/dds/core/status/PublicationMatchedStatus.hpp>
 #include <fastdds/dds/core/status/StatusMask.hpp>
@@ -22,6 +28,7 @@
 #include <fastdds/rtps/participant/ParticipantDiscoveryInfo.h>
 #include <fastdds/rtps/reader/ReaderDiscoveryInfo.h>
 #include <fastdds/rtps/writer/WriterDiscoveryInfo.h>
+#include <fastrtps/types/TypeObject.h>
 #include <pybind11/operators.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -42,17 +49,17 @@ class PyDomainParticipantListener : public DomainParticipantListener {
 
     void on_participant_discovery(DomainParticipant* participant,
                                   eprosima::fastrtps::rtps::ParticipantDiscoveryInfo&& info) override {
-        PYBIND11_OVERRIDE_PURE(void, DomainParticipantListener, on_participant_discovery, participant, std::ref(info));
+        PYBIND11_OVERRIDE_PURE(void, DomainParticipantListener, on_participant_discovery, participant, std::move(info));
     }
 
     void on_subscriber_discovery(DomainParticipant* participant,
                                  eprosima::fastrtps::rtps::ReaderDiscoveryInfo&& info) override {
-        PYBIND11_OVERRIDE_PURE(void, DomainParticipantListener, on_subscriber_discovery, participant, std::ref(info));
+        PYBIND11_OVERRIDE_PURE(void, DomainParticipantListener, on_subscriber_discovery, participant, std::move(info));
     }
 
     void on_publisher_discovery(DomainParticipant* participant,
                                 eprosima::fastrtps::rtps::WriterDiscoveryInfo&& info) override {
-        PYBIND11_OVERRIDE_PURE(void, DomainParticipantListener, on_publisher_discovery, participant, std::ref(info));
+        PYBIND11_OVERRIDE_PURE(void, DomainParticipantListener, on_publisher_discovery, participant, std::move(info));
     }
 
     void on_type_discovery(DomainParticipant* participant,
@@ -197,7 +204,9 @@ TypeSupport create_type_support(TopicDataType* topic_data_type) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 PYBIND11_MODULE(fastdds_pybind, m) {
-    py::class_<Topic, std::shared_ptr<Topic>>(m, "Topic");
+    // py::class_<GUID_t>();
+    // py::class_<Topic, std::shared_ptr<Topic>>(m, "Topic");
+    py::class_<Topic, std::shared_ptr<Topic>>(m, "Topic").def("get_name", &Topic::get_name);
 
     py::class_<SerializedPayload_t>(m, "SerializedPayload_t")
         .def(py::init<>())
@@ -222,6 +231,48 @@ PYBIND11_MODULE(fastdds_pybind, m) {
         .def_readwrite("max_size", &SerializedPayload_t::max_size)
         .def("reserve", &SerializedPayload_t::reserve);
 
+    // First add the necessary type information bindings
+    py::class_<eprosima::fastrtps::types::TypeIdentifier>(m, "TypeIdentifier").def(py::init<>());
+
+    py::class_<eprosima::fastrtps::types::TypeIdentifierWithSize>(m, "TypeIdentifierWithSize")
+        .def(py::init<>())
+        .def(py::init<const eprosima::fastrtps::types::TypeIdentifierWithSize&>())
+        .def_property(
+            "type_id",
+            [](eprosima::fastrtps::types::TypeIdentifierWithSize& tws) -> eprosima::fastrtps::types::TypeIdentifier& {
+                return tws.type_id();
+            },
+            [](eprosima::fastrtps::types::TypeIdentifierWithSize& tws,
+               const eprosima::fastrtps::types::TypeIdentifier& type_id) { tws.type_id(type_id); })
+        .def_property(
+            "typeobject_serialized_size",
+            [](eprosima::fastrtps::types::TypeIdentifierWithSize& tws) -> uint32_t& {
+                return tws.typeobject_serialized_size();
+            },
+            [](eprosima::fastrtps::types::TypeIdentifierWithSize& tws, uint32_t size) {
+                tws.typeobject_serialized_size(size);
+            });
+
+    py::class_<eprosima::fastrtps::types::TypeIdentifierWithDependencies>(m, "TypeIdentifierWithDependencies")
+        .def(py::init<>())
+        .def(py::init<const eprosima::fastrtps::types::TypeIdentifierWithDependencies&>())
+        .def_property(
+            "typeid_with_size",
+            [](eprosima::fastrtps::types::TypeIdentifierWithDependencies& twd)
+                -> eprosima::fastrtps::types::TypeIdentifierWithSize& { return twd.typeid_with_size(); },
+            [](eprosima::fastrtps::types::TypeIdentifierWithDependencies& twd,
+               const eprosima::fastrtps::types::TypeIdentifierWithSize& type_id_size) {
+                twd.typeid_with_size(type_id_size);
+            })
+        .def_property(
+            "dependent_typeid_count",
+            [](eprosima::fastrtps::types::TypeIdentifierWithDependencies& twd) -> int32_t& {
+                return twd.dependent_typeid_count();
+            },
+            [](eprosima::fastrtps::types::TypeIdentifierWithDependencies& twd, int32_t count) {
+                twd.dependent_typeid_count(count);
+            });
+
     py::class_<TopicDataType, PyTopicDataType>(m, "TopicDataType")
         .def(py::init<py::object>())
         .def("_serialize", [](PyTopicDataType& self, py::object data) { return self._serialize(data); })
@@ -239,7 +290,36 @@ PYBIND11_MODULE(fastdds_pybind, m) {
         .def("setName", &TopicDataType::setName)
         .def("getTypeSupport", [](TopicDataType& self) { return create_type_support(&self); })
         .def_readwrite("m_typeSize", &TopicDataType::m_typeSize)
-        .def_readwrite("m_isGetKeyDefined", &TopicDataType::m_isGetKeyDefined);
+        .def_readwrite("m_isGetKeyDefined", &TopicDataType::m_isGetKeyDefined)
+        .def("set_type_hash", [](PyTopicDataType& self, const std::string& hash_str) {
+            if (hash_str.length() != 64) {
+                throw std::invalid_argument("Hash string must be 64 characters (32 bytes) for SHA256");
+            }
+            auto type_info = std::make_shared<eprosima::fastrtps::types::TypeInformation>();
+
+            auto minimal_type_id_with_size = eprosima::fastrtps::types::TypeIdentifierWithSize();
+            auto minimal_type_id = eprosima::fastrtps::types::TypeIdentifier();
+
+            std::array<eprosima::fastrtps::rtps::octet, 14> hash_bytes; // Note that we only take the first 14 bytes to store
+            for (size_t i = 0; i < 32; ++i) {
+                hash_bytes[i] = static_cast<eprosima::fastrtps::rtps::octet>(std::stoul(hash_str.substr(i * 2, 2), nullptr, 16));
+            }
+
+            minimal_type_id.equivalence_hash(hash_bytes.data());
+            minimal_type_id_with_size.type_id(minimal_type_id);
+            minimal_type_id_with_size.typeobject_serialized_size(0);
+
+            auto minimal_deps = eprosima::fastrtps::types::TypeIdentifierWithDependencies();
+            minimal_deps.typeid_with_size(minimal_type_id_with_size);
+            minimal_deps.dependent_typeid_count(0);
+
+            type_info->minimal(minimal_deps);
+            type_info->complete(
+                minimal_deps);  // TODO (AM): do we need to assign the minimal and the complete type info?
+
+            self.type_information(*type_info);
+            return true;
+        });
 
     py::class_<TypeSupport>(m, "TypeSupport")
         .def(py::init<>())
@@ -255,6 +335,7 @@ PYBIND11_MODULE(fastdds_pybind, m) {
 
     py::class_<Duration_t>(m, "Duration_t")
         .def(py::init<>())
+        .def(py::init<int32_t, uint32_t>(), py::arg("sec"), py::arg("nanosec"))
         .def_readwrite("seconds", &Duration_t::seconds)
         .def_readwrite("nanosec", &Duration_t::nanosec);
 
@@ -325,27 +406,6 @@ PYBIND11_MODULE(fastdds_pybind, m) {
         .def_property_readonly_static("RETCODE_NOT_ALLOWED_BY_SECURITY",
                                       [](py::object) { return ReturnCode_t::RETCODE_NOT_ALLOWED_BY_SECURITY; });
 
-    // py::enum_<ReturnCode_t::ReturnCodeValue>(m, "ReturnCodeValue")
-    //     .value("RETCODE_OK", ReturnCode_t::RETCODE_OK)
-    //     .value("RETCODE_ERROR", ReturnCode_t::RETCODE_ERROR)
-    //     .value("RETCODE_UNSUPPORTED", ReturnCode_t::RETCODE_UNSUPPORTED)
-    //     .value("RETCODE_BAD_PARAMETER", ReturnCode_t::RETCODE_BAD_PARAMETER)
-    //     .value("RETCODE_PRECONDITION_NOT_MET",
-    //     ReturnCode_t::RETCODE_PRECONDITION_NOT_MET)
-    //     .value("RETCODE_OUT_OF_RESOURCES",
-    //     ReturnCode_t::RETCODE_OUT_OF_RESOURCES) .value("RETCODE_NOT_ENABLED",
-    //     ReturnCode_t::RETCODE_NOT_ENABLED) .value("RETCODE_IMMUTABLE_POLICY",
-    //     ReturnCode_t::RETCODE_IMMUTABLE_POLICY)
-    //     .value("RETCODE_INCONSISTENT_POLICY",
-    //     ReturnCode_t::RETCODE_INCONSISTENT_POLICY)
-    //     .value("RETCODE_ALREADY_DELETED",
-    //     ReturnCode_t::RETCODE_ALREADY_DELETED) .value("RETCODE_TIMEOUT",
-    //     ReturnCode_t::RETCODE_TIMEOUT) .value("RETCODE_NO_DATA",
-    //     ReturnCode_t::RETCODE_NO_DATA) .value("RETCODE_ILLEGAL_OPERATION",
-    //     ReturnCode_t::RETCODE_ILLEGAL_OPERATION)
-    //     .value("RETCODE_NOT_ALLOWED_BY_SECURITY",
-    //     ReturnCode_t::RETCODE_NOT_ALLOWED_BY_SECURITY);
-
     // py::class_<PublicationMatchedStatus>(m, "PublicationMatchedStatus")
     //     .def(py::init<>())
     //     .def_readwrite("total_count", &PublicationMatchedStatus::total_count)
@@ -397,8 +457,55 @@ PYBIND11_MODULE(fastdds_pybind, m) {
 
     py::class_<DataWriterListener>(m, "DataWriterListener").def(py::init<>());
 
-    py::class_<DataWriterQos>(m, "DataWriterQos").def(py::init<>());
-    // .def_readwrite("history", &DataWriterQos::history);
+    py::enum_<eprosima::fastdds::dds::ReliabilityQosPolicyKind>(m, "ReliabilityQosPolicyKind")
+        .value("BEST_EFFORT", ReliabilityQosPolicyKind::BEST_EFFORT_RELIABILITY_QOS)
+        .value("RELIABLE", ReliabilityQosPolicyKind::RELIABLE_RELIABILITY_QOS);
+
+    py::enum_<eprosima::fastdds::dds::DurabilityQosPolicyKind>(m, "DurabilityQosPolicyKind")
+        .value("VOLATILE", DurabilityQosPolicyKind::VOLATILE_DURABILITY_QOS)
+        .value("TRANSIENT_LOCAL", DurabilityQosPolicyKind::TRANSIENT_LOCAL_DURABILITY_QOS)
+        .value("TRANSIENT", DurabilityQosPolicyKind::TRANSIENT_DURABILITY_QOS)
+        .value("PERSISTENT", DurabilityQosPolicyKind::PERSISTENT_DURABILITY_QOS);
+
+    // Bind ReliabilityQosPolicy
+    py::class_<eprosima::fastdds::dds::ReliabilityQosPolicy>(m, "ReliabilityQosPolicy")
+        .def(py::init<>())
+        .def_property(
+            "kind", [](const eprosima::fastdds::dds::ReliabilityQosPolicy& qos) { return qos.kind; },
+            [](eprosima::fastdds::dds::ReliabilityQosPolicy& qos,
+               eprosima::fastdds::dds::ReliabilityQosPolicyKind kind) { qos.kind = kind; })
+        .def_property(
+            "max_blocking_time",
+            [](const eprosima::fastdds::dds::ReliabilityQosPolicy& qos) { return qos.max_blocking_time; },
+            [](eprosima::fastdds::dds::ReliabilityQosPolicy& qos, const eprosima::fastrtps::Duration_t& time) {
+                qos.max_blocking_time = time;
+            });
+
+    // Bind DurabilityQosPolicy
+    py::class_<eprosima::fastdds::dds::DurabilityQosPolicy>(m, "DurabilityQosPolicy")
+        .def(py::init<>())
+        .def_property(
+            "kind", [](const eprosima::fastdds::dds::DurabilityQosPolicy& qos) { return qos.kind; },
+            [](eprosima::fastdds::dds::DurabilityQosPolicy& qos, eprosima::fastdds::dds::DurabilityQosPolicyKind kind) {
+                qos.kind = kind;
+            });
+
+    // Update/enhance the DataWriterQos binding
+    py::class_<eprosima::fastdds::dds::DataWriterQos>(m, "DataWriterQos")
+        .def(py::init<>())
+        .def_property(
+            "reliability",
+            [](const eprosima::fastdds::dds::DataWriterQos& qos)
+                -> const eprosima::fastdds::dds::ReliabilityQosPolicy& { return qos.reliability(); },
+            [](eprosima::fastdds::dds::DataWriterQos& qos,
+               const eprosima::fastdds::dds::ReliabilityQosPolicy& reliability) { qos.reliability() = reliability; })
+        .def_property(
+            "durability",
+            [](const eprosima::fastdds::dds::DataWriterQos& qos) -> const eprosima::fastdds::dds::DurabilityQosPolicy& {
+                return qos.durability();
+            },
+            [](eprosima::fastdds::dds::DataWriterQos& qos,
+               const eprosima::fastdds::dds::DurabilityQosPolicy& durability) { qos.durability() = durability; });
 
     py::enum_<eprosima::fastdds::dds::HistoryQosPolicyKind>(m, "HistoryQosPolicyKind")
         .value("KEEP_LAST", eprosima::fastdds::dds::HistoryQosPolicyKind::KEEP_LAST_HISTORY_QOS)
@@ -534,21 +641,78 @@ PYBIND11_MODULE(fastdds_pybind, m) {
         .def("properties", [](DomainParticipantQos& qos) { return py::cast(qos.properties()); })
         .def("flow_controllers", [](DomainParticipantQos& qos) { return py::cast(qos.flow_controllers()); });
 
+    py::enum_<eprosima::fastrtps::rtps::ParticipantDiscoveryInfo::DISCOVERY_STATUS>(m, "ParticipantDiscoveryStatus")
+        .value("DISCOVERED_PARTICIPANT",
+               eprosima::fastrtps::rtps::ParticipantDiscoveryInfo::DISCOVERY_STATUS::DISCOVERED_PARTICIPANT)
+        .value("CHANGED_QOS_PARTICIPANT",
+               eprosima::fastrtps::rtps::ParticipantDiscoveryInfo::DISCOVERY_STATUS::CHANGED_QOS_PARTICIPANT)
+        .value("REMOVED_PARTICIPANT",
+               eprosima::fastrtps::rtps::ParticipantDiscoveryInfo::DISCOVERY_STATUS::REMOVED_PARTICIPANT)
+        .value("DROPPED_PARTICIPANT",
+               eprosima::fastrtps::rtps::ParticipantDiscoveryInfo::DISCOVERY_STATUS::DROPPED_PARTICIPANT)
+        .value("IGNORED_PARTICIPANT",
+               eprosima::fastrtps::rtps::ParticipantDiscoveryInfo::DISCOVERY_STATUS::IGNORED_PARTICIPANT);
+
     py::class_<eprosima::fastrtps::rtps::ParticipantDiscoveryInfo>(m, "ParticipantDiscoveryInfo")
-        .def(py::init<>())
+        .def(py::init<const eprosima::fastrtps::rtps::ParticipantProxyData&>())
         .def_readwrite("status", &eprosima::fastrtps::rtps::ParticipantDiscoveryInfo::status)
-        .def_readwrite("info", &eprosima::fastrtps::rtps::ParticipantDiscoveryInfo::info);
+        .def_property_readonly("info",
+                               [](const eprosima::fastrtps::rtps::ParticipantDiscoveryInfo& p)
+                                   -> const eprosima::fastrtps::rtps::ParticipantProxyData& { return p.info; });
+
+    py::enum_<eprosima::fastrtps::rtps::WriterDiscoveryInfo::DISCOVERY_STATUS>(m, "WriterDiscoveryStatus")
+        .value("DISCOVERED_WRITER", eprosima::fastrtps::rtps::WriterDiscoveryInfo::DISCOVERY_STATUS::DISCOVERED_WRITER)
+        .value("CHANGED_QOS_WRITER",
+               eprosima::fastrtps::rtps::WriterDiscoveryInfo::DISCOVERY_STATUS::CHANGED_QOS_WRITER)
+        .value("REMOVED_WRITER", eprosima::fastrtps::rtps::WriterDiscoveryInfo::DISCOVERY_STATUS::REMOVED_WRITER)
+        .value("IGNORED_WRITER", eprosima::fastrtps::rtps::WriterDiscoveryInfo::DISCOVERY_STATUS::IGNORED_WRITER);
+
+    py::class_<eprosima::fastrtps::rtps::WriterDiscoveryInfo>(m, "WriterDiscoveryInfo")
+        .def(py::init<const eprosima::fastrtps::rtps::WriterProxyData&>())
+        .def_readwrite("status", &eprosima::fastrtps::rtps::WriterDiscoveryInfo::status)
+        .def_property_readonly("info",
+                               [](const eprosima::fastrtps::rtps::WriterDiscoveryInfo& w)
+                                   -> const eprosima::fastrtps::rtps::WriterProxyData& { return w.info; });
+
+    py::enum_<eprosima::fastrtps::rtps::ReaderDiscoveryInfo::DISCOVERY_STATUS>(m, "ReaderDiscoveryStatus")
+        .value("DISCOVERED_READER", eprosima::fastrtps::rtps::ReaderDiscoveryInfo::DISCOVERY_STATUS::DISCOVERED_READER)
+        .value("CHANGED_QOS_READER",
+               eprosima::fastrtps::rtps::ReaderDiscoveryInfo::DISCOVERY_STATUS::CHANGED_QOS_READER)
+        .value("REMOVED_READER", eprosima::fastrtps::rtps::ReaderDiscoveryInfo::DISCOVERY_STATUS::REMOVED_READER)
+        .value("IGNORED_READER", eprosima::fastrtps::rtps::ReaderDiscoveryInfo::DISCOVERY_STATUS::IGNORED_READER);
+
+    py::class_<eprosima::fastrtps::rtps::ReaderDiscoveryInfo>(m, "ReaderDiscoveryInfo")
+        .def(py::init<const eprosima::fastrtps::rtps::ReaderProxyData&>())
+        .def_readwrite("status", &eprosima::fastrtps::rtps::ReaderDiscoveryInfo::status)
+        .def_property_readonly("info",
+                               [](const eprosima::fastrtps::rtps::ReaderDiscoveryInfo& r)
+                                   -> const eprosima::fastrtps::rtps::ReaderProxyData& { return r.info; })
+        .def_property_readonly("topic_name",
+                               [](const eprosima::fastrtps::rtps::ReaderDiscoveryInfo& r) -> std::string {
+                                   return r.info.topicName().to_string();
+                               })
+        .def_property_readonly("type_name", [](const eprosima::fastrtps::rtps::ReaderDiscoveryInfo& r) -> std::string {
+            return r.info.typeName().to_string();
+        });
 
     py::class_<DomainParticipantListener, PyDomainParticipantListener, std::shared_ptr<DomainParticipantListener>>(
         m, "DomainParticipantListener")
         .def(py::init<>())
-        .def("on_participant_discovery", [](DomainParticipantListener& self, DomainParticipant* participant, const eprosima::fastdds){})
-        // .def("on_subscriber_discovery",
-        //      py::overload_cast<DomainParticipant*, eprosima::fastrtps::rtps::ReaderDiscoveryInfo&&>(
-        //          &DomainParticipantListener::on_subscriber_discovery))
-        // .def("on_publisher_discovery",
-        //      py::overload_cast<DomainParticipant*, eprosima::fastrtps::rtps::WriterDiscoveryInfo&&>(
-        //          &DomainParticipantListener::on_publisher_discovery))
+        .def("on_participant_discovery",
+             [](DomainParticipantListener& self, DomainParticipant* participant,
+                const eprosima::fastrtps::rtps::ParticipantDiscoveryInfo& info) {
+                 self.on_participant_discovery(participant, eprosima::fastrtps::rtps::ParticipantDiscoveryInfo(info));
+             })
+        .def("on_subscriber_discovery",
+             [](DomainParticipantListener& self, DomainParticipant* participant,
+                const eprosima::fastrtps::rtps::ReaderDiscoveryInfo& info) {
+                 self.on_subscriber_discovery(participant, eprosima::fastrtps::rtps::ReaderDiscoveryInfo(info));
+             })
+        .def("on_publisher_discovery",
+             [](DomainParticipantListener& self, DomainParticipant* participant,
+                const eprosima::fastrtps::rtps::WriterDiscoveryInfo& info) {
+                 self.on_publisher_discovery(participant, eprosima::fastrtps::rtps::WriterDiscoveryInfo(info));
+             })
         .def("on_type_discovery", &DomainParticipantListener::on_type_discovery)
         .def("on_type_dependencies_reply", &DomainParticipantListener::on_type_dependencies_reply)
         .def("on_type_information_received", &DomainParticipantListener::on_type_information_received);
@@ -561,6 +725,13 @@ PYBIND11_MODULE(fastdds_pybind, m) {
         .def("create_topic", &DomainParticipant::create_topic, py::arg("topic_name"), py::arg("type_name"),
              py::arg("qos") = TOPIC_QOS_DEFAULT, py::arg("listener").none(true) = py::none(),
              py::arg("mask") = StatusMask::all())
+        .def(
+            "find_topic",
+            [](DomainParticipant& self, const std::string& topic_name, const Duration_t& timeout) {
+                return self.find_topic(topic_name, timeout);
+            },
+            py::arg("topic_name"), py::arg("timeout") = eprosima::fastrtps::Duration_t(1, 0),  // default timeout of 1s
+            py::return_value_policy::reference)
         .def("get_qos",
              static_cast<const DomainParticipantQos& (DomainParticipant::*)() const>(&DomainParticipant::get_qos))
         .def("set_qos", &DomainParticipant::set_qos)
@@ -571,7 +742,8 @@ PYBIND11_MODULE(fastdds_pybind, m) {
              py::overload_cast<DomainParticipantListener*, const StatusMask&>(&DomainParticipant::set_listener),
              py::arg("listener"), py::arg("mask") = StatusMask::all())
         .def("register_type", py::overload_cast<TypeSupport, const std::string&>(&DomainParticipant::register_type))
-        .def("enable", &DomainParticipant::enable);
+        .def("enable", &DomainParticipant::enable)
+        .def("delete_contained_entities", &DomainParticipant::delete_contained_entities);
 
     py::class_<DomainParticipantFactory, std::unique_ptr<DomainParticipantFactory, py::nodelete>>(
         m, "DomainParticipantFactory")
